@@ -30,6 +30,7 @@ export default function Admin() {
   const clearData = () => {
     if (window.confirm('Are you sure you want to delete all leads?')) {
       localStorage.removeItem('mintora_leads');
+      localStorage.removeItem('mintora_submission_locked');
       setLeads([]);
     }
   };

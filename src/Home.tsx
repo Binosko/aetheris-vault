@@ -1,5 +1,24 @@
 import { useState } from 'react';
 import Reveal from './Reveal';
+import { getCountryDataList, getEmojiFlag } from 'countries-list';
+
+type ToastState = {
+  type: 'success' | 'error';
+  title: string;
+  message: string;
+} | null;
+
+const COUNTRIES = getCountryDataList()
+  .filter((country) => country.phone.length > 0)
+  .map((country) => ({
+    name: country.name,
+    iso2: country.iso2,
+    dialCode: `+${country.phone[0]}`,
+    flag: getEmojiFlag(country.iso2),
+  }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+const DEFAULT_COUNTRY = COUNTRIES.find((country) => country.iso2 === 'MA') || COUNTRIES[0];
 
 // ===================== BUSINESS NICHE ICONS =====================
 const IndustryIcon = () => (
@@ -190,12 +209,32 @@ export default function Home() {
   const [showNicheModal, setShowNicheModal] = useState(false);
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [showCountryPicker, setShowCountryPicker] = useState(false);
+  const [countrySearch, setCountrySearch] = useState('');
+  const [selectedCountry, setSelectedCountry] = useState(DEFAULT_COUNTRY);
+  const [phoneDigits, setPhoneDigits] = useState('');
   const [formData, setFormData] = useState({
     businessName: '',
     phoneNumber: '',
     email: '',
     businessType: ''
   });
+
+  const filteredCountries = COUNTRIES.filter((country) => {
+    const query = countrySearch.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      country.name.toLowerCase().includes(query) ||
+      country.iso2.toLowerCase().includes(query) ||
+      country.dialCode.includes(query)
+    );
+  });
+
+  const showToast = (nextToast: NonNullable<ToastState>) => {
+    setToast(nextToast);
+    window.setTimeout(() => setToast(null), 5000);
+  };
 
   const scrollTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
@@ -204,26 +243,87 @@ export default function Home() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.businessName || !formData.email || !formData.businessType) {
-      alert("Please complete all required fields.");
+    const fullPhoneNumber = `${selectedCountry.dialCode} ${phoneDigits}`.trim();
+
+    if (!formData.businessName || !formData.email || !phoneDigits || !formData.businessType) {
+      showToast({
+        type: 'error',
+        title: 'Missing information',
+        message: 'Please fill in your business name, phone number, email, and business sector.',
+      });
       return;
     }
+
+    if (localStorage.getItem('mintora_submission_locked') === 'true') {
+      showToast({
+        type: 'error',
+        title: 'Request already submitted',
+        message: 'We already received your project request from this device. We will contact you shortly.',
+      });
+      return;
+    }
+
+    const existingData = localStorage.getItem('mintora_leads');
+    const leads = existingData ? JSON.parse(existingData) : [];
+    const duplicateLead = leads.some((lead: { email?: string; phoneNumber?: string }) =>
+      lead.email?.toLowerCase() === formData.email.toLowerCase() || lead.phoneNumber === fullPhoneNumber
+    );
+
+    if (duplicateLead) {
+      localStorage.setItem('mintora_submission_locked', 'true');
+      showToast({
+        type: 'error',
+        title: 'Duplicate request blocked',
+        message: 'This email or phone number has already submitted a project request.',
+      });
+      return;
+    }
+
     const newLead = {
       id: crypto.randomUUID(),
       ...formData,
+      phoneNumber: fullPhoneNumber,
       timestamp: new Date().toISOString()
     };
-    const existingData = localStorage.getItem('mintora_leads');
-    const leads = existingData ? JSON.parse(existingData) : [];
+
     leads.push(newLead);
     localStorage.setItem('mintora_leads', JSON.stringify(leads));
-    alert("Project request received! We will contact you shortly.");
+    localStorage.setItem('mintora_submission_locked', 'true');
+    showToast({
+      type: 'success',
+      title: 'Project request submitted',
+      message: 'We received your details. Mintora will contact you shortly.',
+    });
     setFormData({ businessName: '', phoneNumber: '', email: '', businessType: '' });
+    setPhoneDigits('');
+    setCountrySearch('');
+    setSelectedCountry(DEFAULT_COUNTRY);
     setShowNicheModal(false);
   };
 
   return (
     <div className="min-h-screen bg-[#FAFAFA] text-[#111111] font-sans selection:bg-[#0066FF] selection:text-white">
+      {/* Modern custom notification */}
+      {toast && (
+        <div className="fixed top-5 right-5 z-[120] w-[calc(100%-2.5rem)] max-w-sm">
+          <div className={`rounded-2xl border bg-white shadow-2xl p-4 flex gap-3 ${toast.type === 'success' ? 'border-green-200' : 'border-red-200'}`}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${toast.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+              {toast.type === 'success' ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-bold text-[#111111]">{toast.title}</div>
+              <div className="text-sm text-gray-500 mt-1 leading-relaxed">{toast.message}</div>
+            </div>
+            <button onClick={() => setToast(null)} className="text-gray-400 hover:text-[#111111] transition-colors shrink-0" aria-label="Close notification">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* ==================== STICKY NAV ==================== */}
       <nav className="w-full border-b border-[#E5E7EB] bg-white/80 backdrop-blur-md sticky top-0 z-50">
@@ -575,7 +675,65 @@ export default function Home() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-xs font-bold uppercase tracking-wide text-gray-400">Personal Number</label>
-                    <input type="tel" required value={formData.phoneNumber} onChange={e => setFormData({...formData, phoneNumber: e.target.value})} className="w-full bg-transparent border border-white/20 p-4 text-white focus:border-[#0066FF] outline-none transition-colors rounded-xl" placeholder="(555) 123-4567" />
+                    <div className="relative">
+                      <div className="flex border border-white/20 rounded-xl focus-within:border-[#0066FF] transition-colors">
+                        <button
+                          type="button"
+                          onClick={() => setShowCountryPicker(!showCountryPicker)}
+                          className="px-4 border-r border-white/20 flex items-center gap-2 text-white hover:bg-white/5 transition-colors rounded-l-xl"
+                          aria-label="Select country code"
+                        >
+                          <span className="text-lg leading-none">{selectedCountry.flag}</span>
+                          <span className="text-sm font-semibold">{selectedCountry.dialCode}</span>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                        </button>
+                        <input
+                          type="tel"
+                          required
+                          value={phoneDigits}
+                          onChange={e => setPhoneDigits(e.target.value.replace(/[^0-9\s()-]/g, ''))}
+                          className="w-full bg-transparent p-4 text-white outline-none rounded-r-xl"
+                          placeholder="619 539 346"
+                        />
+                      </div>
+
+                      {showCountryPicker && (
+                        <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-40 bg-white text-[#111111] border border-[#E5E7EB] rounded-2xl shadow-2xl overflow-hidden">
+                          <div className="p-3 border-b border-[#E5E7EB]">
+                            <input
+                              type="text"
+                              value={countrySearch}
+                              onChange={e => setCountrySearch(e.target.value)}
+                              className="w-full bg-[#FAFAFA] border border-[#E5E7EB] rounded-xl px-4 py-3 text-sm outline-none focus:border-[#0066FF]"
+                              placeholder="Search country or code..."
+                              autoFocus
+                            />
+                          </div>
+                          <div className="max-h-72 overflow-y-auto p-2">
+                            {filteredCountries.length === 0 ? (
+                              <div className="px-4 py-6 text-sm text-gray-500 text-center">No countries found.</div>
+                            ) : (
+                              filteredCountries.map((country) => (
+                                <button
+                                  key={`${country.iso2}-${country.dialCode}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedCountry(country);
+                                    setShowCountryPicker(false);
+                                    setCountrySearch('');
+                                  }}
+                                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-gray-50 transition-colors ${selectedCountry.iso2 === country.iso2 ? 'bg-blue-50 text-[#0066FF]' : 'text-[#111111]'}`}
+                                >
+                                  <span className="text-xl leading-none">{country.flag}</span>
+                                  <span className="flex-1 text-sm font-medium truncate">{country.name}</span>
+                                  <span className="text-sm text-gray-500 font-semibold">{country.dialCode}</span>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <label className="text-xs font-bold uppercase tracking-wide text-gray-400">Your Email</label>
